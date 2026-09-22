@@ -1,11 +1,16 @@
 from datetime import datetime
-from pydantic import BaseModel, Field, field_validator
+from typing import Annotated
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 from app.utils.validators import validate_email_format, validate_username
+
+UsernameStr = Annotated[str, Field(min_length=3, max_length=30, description="Unique username")]
+EmailStr = Annotated[str, Field(description="Valid email address")]
+PasswordStr = Annotated[str, Field(min_length=6, max_length=100, description="User password (min 6 characters)")]
 
 
 class UserBase(BaseModel):
-    username: str = Field(..., min_length=3, max_length=30, description="Unique username")
-    email: str = Field(..., description="Valid email address")
+    username: UsernameStr
+    email: EmailStr
     full_name: str | None = Field(None, max_length=100, description="User's full name")
 
     @field_validator("email")
@@ -25,7 +30,13 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=6, max_length=100, description="User password (min 6 characters)")
+    password: PasswordStr
+
+    @model_validator(mode="after")
+    def check_password_complexity(self) -> "UserCreate":
+        if self.password.lower() == self.username.lower():
+            raise ValueError("Password cannot be identical to username.")
+        return self
 
 
 class UserUpdate(BaseModel):
@@ -43,7 +54,14 @@ class UserResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @computed_field  # type: ignore[misc]
+    @property
+    def display_name(self) -> str:
+        """Display friendly name defaulting to username if full_name is absent."""
+        return self.full_name or self.username
+
 
 class UserLogin(BaseModel):
     username: str
     password: str
+
