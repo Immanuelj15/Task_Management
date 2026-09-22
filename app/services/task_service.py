@@ -26,7 +26,9 @@ class TaskService:
             # Validate assigned user exists if provided
             if task_in.assigned_user_id is not None:
                 if not user_service.get_user_by_id(task_in.assigned_user_id):
-                    raise ValueError(f"User with ID {task_in.assigned_user_id} does not exist.")
+                    from app.exceptions import ValidationAppException
+                    raise ValidationAppException(f"User with ID {task_in.assigned_user_id} does not exist.")
+
 
             now = datetime.utcnow()
             new_task = Task(
@@ -104,8 +106,10 @@ class TaskService:
 
             if update_data.assigned_user_id is not None:
                 if not user_service.get_user_by_id(update_data.assigned_user_id):
-                    raise ValueError(f"User with ID {update_data.assigned_user_id} does not exist.")
+                    from app.exceptions import ValidationAppException
+                    raise ValidationAppException(f"User with ID {update_data.assigned_user_id} does not exist.")
                 task.assigned_user_id = update_data.assigned_user_id
+
 
             if update_data.title is not None:
                 task.title = update_data.title

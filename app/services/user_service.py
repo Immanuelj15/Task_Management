@@ -15,9 +15,12 @@ class UserService:
             # Check unique username
             for existing in self._users.values():
                 if existing.username.lower() == user_in.username.lower():
-                    raise ValueError(f"Username '{user_in.username}' is already taken.")
+                    from app.exceptions import UserAlreadyExistsException
+                    raise UserAlreadyExistsException("username", user_in.username)
                 if existing.email.lower() == user_in.email.lower():
-                    raise ValueError(f"Email '{user_in.email}' is already registered.")
+                    from app.exceptions import UserAlreadyExistsException
+                    raise UserAlreadyExistsException("email", user_in.email)
+
 
             new_user = User(
                 id=self._id_counter,

@@ -1,5 +1,15 @@
-from fastapi import FastAPI, HTTPException, status, Query
+from fastapi import FastAPI, HTTPException, Request, status, Query
+from fastapi.responses import JSONResponse
 from app.config import settings
+from app.exceptions import (
+    BaseAppException,
+    EntityNotFoundException,
+    UserNotFoundException,
+    TaskNotFoundException,
+    UserAlreadyExistsException,
+    ValidationAppException,
+    AuthenticationException,
+)
 from app.models.task import TaskStatus
 from app.schemas.user import UserCreate, UserResponse, UserLogin
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
@@ -12,6 +22,31 @@ app = FastAPI(
     version=settings.APP_VERSION,
     debug=settings.DEBUG,
 )
+
+
+@app.exception_handler(BaseAppException)
+async def domain_exception_handler(request: Request, exc: BaseAppException) -> JSONResponse:
+    """Centralized handler for all domain business exceptions."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": exc.message,
+            "error_code": exc.error_code,
+            "message": exc.message,
+            "details": exc.details,
+            "status_code": exc.status_code,
+        },
+    )
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+    """Fallback handler for standard ValueErrors."""
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": str(exc)},
+    )
+
 
 
 @app.get("/", tags=["Health"])
