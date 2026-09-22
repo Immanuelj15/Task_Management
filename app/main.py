@@ -16,12 +16,37 @@ from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
 from app.services.user_service import user_service
 from app.services.task_service import task_service
 
+import time
+import uuid
+from app.logging_config import logger
+
 app = FastAPI(
     title=settings.APP_NAME,
     description="Modular Production-Grade API for managing users and tasks",
     version=settings.APP_VERSION,
     debug=settings.DEBUG,
 )
+
+
+@app.middleware("http")
+async def logging_and_correlation_middleware(request: Request, call_next):
+    """
+    Middleware injecting X-Request-ID and logging request execution duration.
+    """
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    start_time = time.perf_counter()
+    logger.info(f"Incoming: {request.method} {request.url.path} [req_id={request_id}]")
+
+    response = await call_next(request)
+
+    duration_ms = (time.perf_counter() - start_time) * 1000
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        f"Completed: {request.method} {request.url.path} "
+        f"status={response.status_code} ({duration_ms:.2f}ms) [req_id={request_id}]"
+    )
+    return response
+
 
 
 @app.exception_handler(BaseAppException)
