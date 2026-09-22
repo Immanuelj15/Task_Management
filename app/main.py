@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException, Request, status, Query
+from fastapi import Depends, FastAPI, HTTPException, Request, status, Query
 from fastapi.responses import JSONResponse
 from app.config import settings
+from app.dependencies import get_task_service, get_user_service
 from app.exceptions import (
     BaseAppException,
     EntityNotFoundException,
@@ -13,8 +14,8 @@ from app.exceptions import (
 from app.models.task import TaskStatus
 from app.schemas.user import UserCreate, UserResponse, UserLogin
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
-from app.services.user_service import user_service
-from app.services.task_service import task_service
+from app.services.user_service import UserService, user_service
+from app.services.task_service import TaskService, task_service
 
 import time
 import uuid
@@ -48,7 +49,6 @@ async def logging_and_correlation_middleware(request: Request, call_next):
     return response
 
 
-
 @app.exception_handler(BaseAppException)
 async def domain_exception_handler(request: Request, exc: BaseAppException) -> JSONResponse:
     """Centralized handler for all domain business exceptions."""
@@ -73,7 +73,6 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
     )
 
 
-
 @app.get("/", tags=["Health"])
 def root():
     return {
@@ -94,9 +93,9 @@ def root():
     tags=["Users"],
     summary="Register a new user",
 )
-def create_user(user_in: UserCreate):
+def create_user(user_in: UserCreate, svc: UserService = Depends(get_user_service)):
     try:
-        user = user_service.create_user(user_in)
+        user = svc.create_user(user_in)
         return user
     except ValueError as e:
         raise HTTPException(
@@ -111,8 +110,12 @@ def create_user(user_in: UserCreate):
     tags=["Users"],
     summary="List all users",
 )
-def list_users(skip: int = 0, limit: int = 100):
-    return user_service.list_users(skip=skip, limit=limit)
+def list_users(
+    skip: int = 0,
+    limit: int = 100,
+    svc: UserService = Depends(get_user_service),
+):
+    return svc.list_users(skip=skip, limit=limit)
 
 
 @app.get(
@@ -121,8 +124,8 @@ def list_users(skip: int = 0, limit: int = 100):
     tags=["Users"],
     summary="Get user by ID",
 )
-def get_user(user_id: int):
-    user = user_service.get_user_by_id(user_id)
+def get_user(user_id: int, svc: UserService = Depends(get_user_service)):
+    user = svc.get_user_by_id(user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -137,8 +140,8 @@ def get_user(user_id: int):
     tags=["Users"],
     summary="Authenticate a user",
 )
-def login_user(credentials: UserLogin):
-    user = user_service.authenticate_user(
+def login_user(credentials: UserLogin, svc: UserService = Depends(get_user_service)):
+    user = svc.authenticate_user(
         username=credentials.username,
         password=credentials.password,
     )
@@ -160,9 +163,9 @@ def login_user(credentials: UserLogin):
     tags=["Tasks"],
     summary="Create a new task",
 )
-def create_task(task_in: TaskCreate):
+def create_task(task_in: TaskCreate, svc: TaskService = Depends(get_task_service)):
     try:
-        task = task_service.create_task(task_in)
+        task = svc.create_task(task_in)
         return task
     except ValueError as e:
         raise HTTPException(
@@ -182,8 +185,9 @@ def list_tasks(
     assigned_user_id: int | None = Query(None),
     skip: int = 0,
     limit: int = 100,
+    svc: TaskService = Depends(get_task_service),
 ):
-    return task_service.list_tasks(
+    return svc.list_tasks(
         status=task_status,
         assigned_user_id=assigned_user_id,
         skip=skip,
@@ -197,8 +201,11 @@ def list_tasks(
     tags=["Tasks"],
     summary="Retrieve tasks chunked in batches using custom iterator",
 )
-def get_task_batches(batch_size: int = Query(5, ge=1, le=50)):
-    iterator = task_service.iter_tasks_batches(batch_size=batch_size)
+def get_task_batches(
+    batch_size: int = Query(5, ge=1, le=50),
+    svc: TaskService = Depends(get_task_service),
+):
+    iterator = svc.iter_tasks_batches(batch_size=batch_size)
     return list(iterator)
 
 
@@ -208,10 +215,9 @@ def get_task_batches(batch_size: int = Query(5, ge=1, le=50)):
     tags=["Tasks"],
     summary="Iterate tasks in strict priority order (HIGH -> MEDIUM -> LOW)",
 )
-def get_tasks_by_priority():
-    iterator = task_service.iter_tasks_by_priority()
+def get_tasks_by_priority(svc: TaskService = Depends(get_task_service)):
+    iterator = svc.iter_tasks_by_priority()
     return list(iterator)
-
 
 
 @app.get(
@@ -220,8 +226,8 @@ def get_tasks_by_priority():
     tags=["Tasks"],
     summary="Get task by ID",
 )
-def get_task(task_id: int):
-    task = task_service.get_task_by_id(task_id)
+def get_task(task_id: int, svc: TaskService = Depends(get_task_service)):
+    task = svc.get_task_by_id(task_id)
     if not task:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -236,9 +242,13 @@ def get_task(task_id: int):
     tags=["Tasks"],
     summary="Update task details or status",
 )
-def update_task(task_id: int, update_data: TaskUpdate):
+def update_task(
+    task_id: int,
+    update_data: TaskUpdate,
+    svc: TaskService = Depends(get_task_service),
+):
     try:
-        updated = task_service.update_task(task_id, update_data)
+        updated = svc.update_task(task_id, update_data)
         if not updated:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -258,11 +268,11 @@ def update_task(task_id: int, update_data: TaskUpdate):
     tags=["Tasks"],
     summary="Delete a task",
 )
-def delete_task(task_id: int):
-    deleted = task_service.delete_task(task_id)
+def delete_task(task_id: int, svc: TaskService = Depends(get_task_service)):
+    deleted = svc.delete_task(task_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task with id {task_id} not found",
         )
-    return None
+    return None

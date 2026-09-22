@@ -1,75 +1,66 @@
-import threading
+from app.exceptions import UserAlreadyExistsException
 from app.models.user import User
+from app.repositories.base import IUserRepository
+from app.repositories.user_repository import InMemoryUserRepository
 from app.schemas.user import UserCreate, UserUpdate
 from app.utils.security import hash_password, verify_password
 
 
 class UserService:
-    def __init__(self) -> None:
-        self._users: dict[int, User] = {}
-        self._id_counter: int = 1
-        self._lock = threading.Lock()
+    """
+    Business Logic Layer for User Management.
+    Adheres to SOLID:
+    - SRP: Only business rules and workflow orchestration.
+    - DIP: Relies on IUserRepository abstraction instead of concrete storage.
+    - OCP: Storage backend can be changed without modifying UserService.
+    """
+
+    def __init__(self, repository: IUserRepository | None = None) -> None:
+        self.repository = repository or InMemoryUserRepository()
 
     def create_user(self, user_in: UserCreate) -> User:
-        with self._lock:
-            # Check unique username
-            for existing in self._users.values():
-                if existing.username.lower() == user_in.username.lower():
-                    from app.exceptions import UserAlreadyExistsException
-                    raise UserAlreadyExistsException("username", user_in.username)
-                if existing.email.lower() == user_in.email.lower():
-                    from app.exceptions import UserAlreadyExistsException
-                    raise UserAlreadyExistsException("email", user_in.email)
+        # Check unique username
+        if self.repository.get_by_username(user_in.username):
+            raise UserAlreadyExistsException("username", user_in.username)
 
+        # Check unique email
+        if self.repository.get_by_email(user_in.email):
+            raise UserAlreadyExistsException("email", user_in.email)
 
-            new_user = User(
-                id=self._id_counter,
-                username=user_in.username,
-                email=user_in.email,
-                hashed_password=hash_password(user_in.password),
-                full_name=user_in.full_name,
-                is_active=True,
-            )
-            self._users[new_user.id] = new_user
-            self._id_counter += 1
-            return new_user
+        new_user = User(
+            id=0,  # Will be assigned by repository
+            username=user_in.username,
+            email=user_in.email,
+            hashed_password=hash_password(user_in.password),
+            full_name=user_in.full_name,
+            is_active=True,
+        )
+        return self.repository.add(new_user)
 
     def get_user_by_id(self, user_id: int) -> User | None:
-        return self._users.get(user_id)
+        return self.repository.get_by_id(user_id)
 
     def get_user_by_username(self, username: str) -> User | None:
-        for u in self._users.values():
-            if u.username.lower() == username.lower():
-                return u
-        return None
+        return self.repository.get_by_username(username)
 
     def get_user_by_email(self, email: str) -> User | None:
-        for u in self._users.values():
-            if u.email.lower() == email.lower():
-                return u
-        return None
+        return self.repository.get_by_email(email)
 
     def list_users(self, skip: int = 0, limit: int = 100) -> list[User]:
-        users = list(self._users.values())
-        return users[skip : skip + limit]
+        return self.repository.list_all(skip=skip, limit=limit)
 
     def update_user(self, user_id: int, update_data: UserUpdate) -> User | None:
-        with self._lock:
-            user = self._users.get(user_id)
-            if not user:
-                return None
-            if update_data.full_name is not None:
-                user.full_name = update_data.full_name
-            if update_data.is_active is not None:
-                user.is_active = update_data.is_active
-            return user
+        user = self.repository.get_by_id(user_id)
+        if not user:
+            return None
+        if update_data.full_name is not None:
+            user.full_name = update_data.full_name
+        if update_data.is_active is not None:
+            user.is_active = update_data.is_active
+        return self.repository.update(user)
 
     def delete_user(self, user_id: int) -> bool:
-        with self._lock:
-            if user_id in self._users:
-                del self._users[user_id]
-                return True
-            return False
+        return self.repository.delete(user_id)
 
     def authenticate_user(self, username: str, password: str) -> User | None:
         user = self.get_user_by_username(username)
@@ -80,10 +71,9 @@ class UserService:
         return user
 
     def clear(self) -> None:
-        """Reset internal store, helpful for unit testing."""
-        with self._lock:
-            self._users.clear()
-            self._id_counter = 1
+        """Reset internal store for test isolation."""
+        self.repository.clear()
 
 
+# Default singleton instance for application use
 user_service = UserService()

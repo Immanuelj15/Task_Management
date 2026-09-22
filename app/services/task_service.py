@@ -1,18 +1,55 @@
 import threading
 from datetime import datetime
+from app.exceptions import ValidationAppException
 from app.models.task import Task, TaskStatus
+from app.repositories.base import ITaskRepository
+from app.repositories.task_repository import InMemoryTaskRepository
 from app.schemas.task import TaskCreate, TaskUpdate
-from app.services.user_service import user_service
+from app.services.user_service import UserService, user_service
 from app.utils.context_managers import task_transaction
 from app.utils.decorators import measure_time
 
 
 class TaskService:
-    def __init__(self) -> None:
-        self._tasks: dict[int, Task] = {}
-        self._id_counter: int = 1
+    """
+    Business Logic Layer for Task Management.
+    Adheres to SOLID:
+    - SRP: Dedicated solely to business validation and orchestration.
+    - DIP: Relies on ITaskRepository abstraction rather than concrete store.
+    - OCP: Storage implementation can be swapped without touching TaskService.
+    """
+
+    def __init__(
+        self,
+        repository: ITaskRepository | None = None,
+        user_service_instance: UserService | None = None,
+    ) -> None:
+        self.repository = repository or InMemoryTaskRepository()
+        self.user_service = user_service_instance or user_service
         self._lock = threading.RLock()
 
+    # Dynamic bridge to underlying storage for transaction context manager
+    @property
+    def _tasks(self) -> dict[int, Task]:
+        if hasattr(self.repository, "_tasks"):
+            return self.repository._tasks  # type: ignore[attr-defined]
+        return {}
+
+    @_tasks.setter
+    def _tasks(self, val: dict[int, Task]) -> None:
+        if hasattr(self.repository, "_tasks"):
+            self.repository._tasks = val  # type: ignore[attr-defined]
+
+    @property
+    def _id_counter(self) -> int:
+        if hasattr(self.repository, "_id_counter"):
+            return self.repository._id_counter  # type: ignore[attr-defined]
+        return 1
+
+    @_id_counter.setter
+    def _id_counter(self, val: int) -> None:
+        if hasattr(self.repository, "_id_counter"):
+            self.repository._id_counter = val  # type: ignore[attr-defined]
 
     @measure_time
     def create_task(self, task_in: TaskCreate, apply_pipeline: bool = True) -> Task:
@@ -25,14 +62,12 @@ class TaskService:
 
             # Validate assigned user exists if provided
             if task_in.assigned_user_id is not None:
-                if not user_service.get_user_by_id(task_in.assigned_user_id):
-                    from app.exceptions import ValidationAppException
+                if not self.user_service.get_user_by_id(task_in.assigned_user_id):
                     raise ValidationAppException(f"User with ID {task_in.assigned_user_id} does not exist.")
-
 
             now = datetime.utcnow()
             new_task = Task(
-                id=self._id_counter,
+                id=0,
                 title=task_in.title,
                 description=task_in.description,
                 status=task_in.status,
@@ -41,9 +76,7 @@ class TaskService:
                 created_at=now,
                 updated_at=now,
             )
-            self._tasks[new_task.id] = new_task
-            self._id_counter += 1
-            return new_task
+            return self.repository.add(new_task)
 
     def bulk_create_tasks(self, tasks_in: list[TaskCreate]) -> list[Task]:
         """
@@ -58,10 +91,8 @@ class TaskService:
                     created_tasks.append(task)
         return created_tasks
 
-
-
     def get_task_by_id(self, task_id: int) -> Task | None:
-        return self._tasks.get(task_id)
+        return self.repository.get_by_id(task_id)
 
     def list_tasks(
         self,
@@ -70,20 +101,20 @@ class TaskService:
         skip: int = 0,
         limit: int = 100,
     ) -> list[Task]:
-        tasks = list(self._tasks.values())
-        if status is not None:
-            tasks = [t for t in tasks if t.status == status]
-        if assigned_user_id is not None:
-            tasks = [t for t in tasks if t.assigned_user_id == assigned_user_id]
-        return tasks[skip : skip + limit]
+        return self.repository.list_filtered(
+            status=status,
+            assigned_user_id=assigned_user_id,
+            skip=skip,
+            limit=limit,
+        )
 
     def iter_tasks_batches(self, batch_size: int = 10):
         from app.utils.iterators import TaskBatchIterator
-        return TaskBatchIterator(list(self._tasks.values()), batch_size=batch_size)
+        return TaskBatchIterator(self.repository.list_all(0, 100000), batch_size=batch_size)
 
     def iter_tasks_by_priority(self):
         from app.utils.iterators import TaskPriorityIterator
-        return TaskPriorityIterator(list(self._tasks.values()))
+        return TaskPriorityIterator(self.repository.list_all(0, 100000))
 
     def stream_tasks(
         self,
@@ -92,24 +123,21 @@ class TaskService:
     ):
         from app.utils.iterators import stream_tasks_generator
         return stream_tasks_generator(
-            list(self._tasks.values()),
+            self.repository.list_all(0, 100000),
             status=status,
             assigned_user_id=assigned_user_id,
         )
 
-
     def update_task(self, task_id: int, update_data: TaskUpdate) -> Task | None:
         with self._lock:
-            task = self._tasks.get(task_id)
+            task = self.repository.get_by_id(task_id)
             if not task:
                 return None
 
             if update_data.assigned_user_id is not None:
-                if not user_service.get_user_by_id(update_data.assigned_user_id):
-                    from app.exceptions import ValidationAppException
+                if not self.user_service.get_user_by_id(update_data.assigned_user_id):
                     raise ValidationAppException(f"User with ID {update_data.assigned_user_id} does not exist.")
                 task.assigned_user_id = update_data.assigned_user_id
-
 
             if update_data.title is not None:
                 task.title = update_data.title
@@ -121,20 +149,17 @@ class TaskService:
                 task.priority = update_data.priority
 
             task.updated_at = datetime.utcnow()
-            return task
+            return self.repository.update(task)
 
     def delete_task(self, task_id: int) -> bool:
         with self._lock:
-            if task_id in self._tasks:
-                del self._tasks[task_id]
-                return True
-            return False
+            return self.repository.delete(task_id)
 
     def clear(self) -> None:
-        """Reset internal store, helpful for unit testing."""
+        """Reset internal store for testing."""
         with self._lock:
-            self._tasks.clear()
-            self._id_counter = 1
+            self.repository.clear()
 
 
+# Default singleton instance for application use
 task_service = TaskService()
