@@ -11,8 +11,14 @@ class TaskService:
         self._id_counter: int = 1
         self._lock = threading.Lock()
 
-    def create_task(self, task_in: TaskCreate) -> Task:
+    def create_task(self, task_in: TaskCreate, apply_pipeline: bool = True) -> Task:
         with self._lock:
+            # Process input through OOP pipeline if enabled
+            if apply_pipeline:
+                from app.pipelines.task_pipeline import default_task_pipeline
+                context = default_task_pipeline.execute(task_in)
+                task_in = context.payload
+
             # Validate assigned user exists if provided
             if task_in.assigned_user_id is not None:
                 if not user_service.get_user_by_id(task_in.assigned_user_id):
@@ -32,6 +38,7 @@ class TaskService:
             self._tasks[new_task.id] = new_task
             self._id_counter += 1
             return new_task
+
 
     def get_task_by_id(self, task_id: int) -> Task | None:
         return self._tasks.get(task_id)
