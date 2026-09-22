@@ -3,14 +3,18 @@ from datetime import datetime
 from app.models.task import Task, TaskStatus
 from app.schemas.task import TaskCreate, TaskUpdate
 from app.services.user_service import user_service
+from app.utils.context_managers import task_transaction
+from app.utils.decorators import measure_time
 
 
 class TaskService:
     def __init__(self) -> None:
         self._tasks: dict[int, Task] = {}
         self._id_counter: int = 1
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
+
+    @measure_time
     def create_task(self, task_in: TaskCreate, apply_pipeline: bool = True) -> Task:
         with self._lock:
             # Process input through OOP pipeline if enabled
@@ -38,6 +42,20 @@ class TaskService:
             self._tasks[new_task.id] = new_task
             self._id_counter += 1
             return new_task
+
+    def bulk_create_tasks(self, tasks_in: list[TaskCreate]) -> list[Task]:
+        """
+        Transactional bulk task creation using task_transaction context manager.
+        Ensures atomicity: either all tasks are created, or all are rolled back.
+        """
+        created_tasks: list[Task] = []
+        with self._lock:
+            with task_transaction(self):
+                for task_in in tasks_in:
+                    task = self.create_task(task_in)
+                    created_tasks.append(task)
+        return created_tasks
+
 
 
     def get_task_by_id(self, task_id: int) -> Task | None:
