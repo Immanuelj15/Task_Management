@@ -132,6 +132,29 @@ def list_tasks(
 
 
 @app.get(
+    "/tasks/stream/batches",
+    response_model=list[list[TaskResponse]],
+    tags=["Tasks"],
+    summary="Retrieve tasks chunked in batches using custom iterator",
+)
+def get_task_batches(batch_size: int = Query(5, ge=1, le=50)):
+    iterator = task_service.iter_tasks_batches(batch_size=batch_size)
+    return list(iterator)
+
+
+@app.get(
+    "/tasks/ordered/priority",
+    response_model=list[TaskResponse],
+    tags=["Tasks"],
+    summary="Iterate tasks in strict priority order (HIGH -> MEDIUM -> LOW)",
+)
+def get_tasks_by_priority():
+    iterator = task_service.iter_tasks_by_priority()
+    return list(iterator)
+
+
+
+@app.get(
     "/tasks/{task_id}",
     response_model=TaskResponse,
     tags=["Tasks"],

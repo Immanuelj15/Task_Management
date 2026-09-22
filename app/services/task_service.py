@@ -50,6 +50,27 @@ class TaskService:
             tasks = [t for t in tasks if t.assigned_user_id == assigned_user_id]
         return tasks[skip : skip + limit]
 
+    def iter_tasks_batches(self, batch_size: int = 10):
+        from app.utils.iterators import TaskBatchIterator
+        return TaskBatchIterator(list(self._tasks.values()), batch_size=batch_size)
+
+    def iter_tasks_by_priority(self):
+        from app.utils.iterators import TaskPriorityIterator
+        return TaskPriorityIterator(list(self._tasks.values()))
+
+    def stream_tasks(
+        self,
+        status: TaskStatus | None = None,
+        assigned_user_id: int | None = None,
+    ):
+        from app.utils.iterators import stream_tasks_generator
+        return stream_tasks_generator(
+            list(self._tasks.values()),
+            status=status,
+            assigned_user_id=assigned_user_id,
+        )
+
+
     def update_task(self, task_id: int, update_data: TaskUpdate) -> Task | None:
         with self._lock:
             task = self._tasks.get(task_id)
