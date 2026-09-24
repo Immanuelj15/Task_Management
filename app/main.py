@@ -275,4 +275,62 @@ def delete_task(task_id: int, svc: TaskService = Depends(get_task_service)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task with id {task_id} not found",
         )
-    return None
+    return None
+
+
+# ==================== Debugging & Profiling Routes ====================
+
+
+@app.get(
+    "/debug/memory",
+    tags=["Diagnostics"],
+    summary="Retrieve current and peak memory allocations",
+)
+def get_memory_stats():
+    from app.utils.profiler import get_current_memory_snapshot
+    return get_current_memory_snapshot()
+
+
+@app.get(
+    "/debug/profiler/tasks",
+    tags=["Diagnostics"],
+    summary="Profile task listing execution time, memory delta, and hotspots",
+)
+def profile_tasks_endpoint(svc: TaskService = Depends(get_task_service)):
+    from app.utils.profiler import ExecutionProfiler, MemoryProfiler
+
+    with MemoryProfiler() as mem:
+        with ExecutionProfiler(top_n=5) as exec_prof:
+            tasks = svc.list_tasks(limit=100)
+
+    return {
+        "tasks_returned": len(tasks),
+        "memory_stats": {
+            "current_kb": mem.stats.current_kb if mem.stats else 0,
+            "peak_kb": mem.stats.peak_kb if mem.stats else 0,
+            "delta_kb": mem.stats.delta_kb if mem.stats else 0,
+        },
+        "top_hotspots_snippet": exec_prof.report[:500] if exec_prof.report else "",
+    }
+
+
+@app.get(
+    "/debug/system",
+    tags=["Diagnostics"],
+    summary="System and runtime diagnostic information",
+)
+def get_system_diagnostics():
+    import gc
+    import platform
+    import sys
+    import threading
+
+    return {
+        "python_version": sys.version,
+        "platform": platform.platform(),
+        "active_threads": threading.active_count(),
+        "gc_counts": gc.get_count(),
+        "environment": settings.ENVIRONMENT,
+        "debug_mode": settings.DEBUG,
+    }
+
