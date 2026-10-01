@@ -43,8 +43,9 @@ def test_audit_branch_governance_passes():
 
 def test_run_full_audit_pillars():
     """Verify all 6 pillars are registered and evaluated in full audit."""
-    results = run_full_audit()
+    results = run_full_audit(skip_recursive_tests=True)
     assert len(results) == 6
     for pillar_name, (passed, details) in results.items():
-        assert isinstance(passed, bool)
-        assert isinstance(details, str)
+        assert isinstance(passed, bool), f"{pillar_name} passed is not bool"
+        assert isinstance(details, str), f"{pillar_name} details is not str"
+        assert passed is True, f"{pillar_name} failed: {details}"
