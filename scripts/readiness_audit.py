@@ -10,7 +10,6 @@ import subprocess
 import sys
 from typing import Dict, List, Tuple
 
-# Ensure root repository directory is on sys.path
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
@@ -28,6 +27,7 @@ REQUIRED_PROJECT_FILES = [
     "docs/GIT_LARGE_FILES.md",
     "docs/CODE_REVIEW_GUIDELINES.md",
     "docs/MERGE_CONFLICT_RESOLUTION.md",
+    "docs/PRODUCTION_READINESS_AUDIT.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/workflows/ci.yml",
 ]
@@ -35,9 +35,7 @@ REQUIRED_PROJECT_FILES = [
 
 def audit_file_structure() -> Tuple[bool, str]:
     """Pillar 1: Verify presence of all critical production files."""
-    missing = [
-        f for f in REQUIRED_PROJECT_FILES if not os.path.exists(os.path.join(ROOT_DIR, f))
-    ]
+    missing = [f for f in REQUIRED_PROJECT_FILES if not os.path.exists(f)]
     if missing:
         return False, f"Missing required files: {', '.join(missing)}"
     return True, f"All {len(REQUIRED_PROJECT_FILES)} critical files present."
@@ -51,7 +49,6 @@ def audit_security_and_secrets() -> Tuple[bool, str]:
             capture_output=True,
             text=True,
             check=True,
-            cwd=ROOT_DIR,
         )
         tracked = res.stdout.splitlines()
         forbidden = [".env", "id_rsa", ".pem", ".key"]
@@ -80,8 +77,7 @@ def audit_merge_conflicts() -> Tuple[bool, str]:
     """Pillar 4: Verify zero unresolved merge conflict markers exist in source."""
     try:
         from scripts.merge_conflict_simulator import scan_directory_for_conflicts
-        app_dir = os.path.join(ROOT_DIR, "app")
-        conflicts = scan_directory_for_conflicts(app_dir)
+        conflicts = scan_directory_for_conflicts("app")
         if conflicts:
             return False, f"Unresolved conflict markers in {len(conflicts)} files."
         return True, "Zero merge conflict markers found in application code."
@@ -101,27 +97,26 @@ def audit_branch_governance() -> Tuple[bool, str]:
         return False, f"Branch audit failed: {exc}"
 
 
-def audit_automated_tests() -> Tuple[bool, str]:
-    """Pillar 6: Verify automated test suite."""
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return True, "Automated test suite active and verified (pytest context)."
-
+def audit_automated_tests(skip_recursive: bool = True) -> Tuple[bool, str]:
+    """Pillar 6: Run full pytest suite (excluding recursive test runner)."""
     try:
+        cmd = [sys.executable, "-m", "pytest", "-q", "--tb=no"]
+        if skip_recursive:
+            cmd.extend(["-k", "not test_readiness_audit"])
         res = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/test_config.py", "-q"],
+            cmd,
             capture_output=True,
             text=True,
-            timeout=30,
-            cwd=ROOT_DIR,
+            timeout=60,
         )
         if res.returncode == 0:
-            return True, "Automated test suite sanity checks passed (100% green)."
+            return True, "All automated tests executed and passed (100% green)."
         return False, f"Pytest failed with exit code {res.returncode}:\n{res.stdout[-300:]}"
     except Exception as exc:
         return False, f"Test suite run failed: {exc}"
 
 
-def run_full_audit() -> Dict[str, Tuple[bool, str]]:
+def run_full_audit(skip_recursive_tests: bool = True) -> Dict[str, Tuple[bool, str]]:
     """Execute all 6 readiness audit pillars."""
     return {
         "1. File Structure & Completeness": audit_file_structure(),
@@ -129,7 +124,7 @@ def run_full_audit() -> Dict[str, Tuple[bool, str]]:
         "3. Large Files & LFS Compliance": audit_large_files(),
         "4. Merge Conflict Cleanliness": audit_merge_conflicts(),
         "5. Git Branching Governance": audit_branch_governance(),
-        "6. Automated Test Suite (Pytest)": audit_automated_tests(),
+        "6. Automated Test Suite (Pytest)": audit_automated_tests(skip_recursive=skip_recursive_tests),
     }
 
 
@@ -138,7 +133,7 @@ def main() -> int:
     print("   TASK MANAGEMENT API - PRODUCTION READINESS AUDIT (D15)")
     print("=" * 70)
 
-    results = run_full_audit()
+    results = run_full_audit(skip_recursive_tests=True)
     passed_count = sum(1 for passed, _ in results.values() if passed)
     total_count = len(results)
 
@@ -152,7 +147,7 @@ def main() -> int:
     print("=" * 70)
 
     if passed_count == total_count:
-        print("\n[RESULT] SYSTEM IS 100% PRODUCTION READY FOR DEPLOYMENT! [SUCCESS]\n")
+        print("\n[RESULT] SYSTEM IS 100% PRODUCTION READY FOR DEPLOYMENT! (READY)\n")
         return 0
     else:
         print("\n[RESULT] AUDIT FAILED. Resolve blocking items before deployment.\n")
